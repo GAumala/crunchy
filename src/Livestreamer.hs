@@ -1,5 +1,6 @@
 module Livestreamer (
   stream,
+  streamFinishedSuccessfully,
   streamResult
 ) where
 
@@ -35,5 +36,5 @@ streamResult :: String -> String
 streamResult stdout
   | result == Just True = "Finished successfully"
   | result == Just False = "Closed the player"
-  | otherwise = "WTF did just happen? livestreamer exited with: " ++ stdout 
+  | otherwise = "WTF did just happen? livestreamer exited with: " ++ stdout
   where result = streamFinishedSuccessfully stdout

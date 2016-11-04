@@ -10,10 +10,12 @@ import qualified Data.Text as T
 import System.Directory
 import System.FilePath.Posix
 
-catalogDir = "src/catalog/"
+_catalogDir = "/.local/share/crunchy/catalog/"
 
 getCatalogFilePath :: String -> IO (Maybe String)
 getCatalogFilePath key = do
+  userDir <- getHomeDirectory
+  let catalogDir = userDir ++ _catalogDir
   let filepath = catalogDir ++  key ++ ".txt"
   fileExists <- doesFileExist filepath
   if fileExists then
@@ -35,9 +37,8 @@ listToOptionMsg [x, xs] = x ++ ", or " ++ listToOptionMsg [xs]
 listToOptionMsg (x:xs) = x ++ ", " ++ listToOptionMsg xs
 
 lookupEpisode :: Maybe String -> [(String, String)] -> [(String, String)]
-lookupEpisode key episodeList =
-  if isNothing key then episodeList
-  else lookupEpisode' (fromJust key) episodeList
+lookupEpisode Nothing episodeList =  episodeList
+lookupEpisode key episodeList =  lookupEpisode' (fromJust key) episodeList
 
 lookupEpisode' :: String -> [(String, String)] -> [(String, String)]
 lookupEpisode' key (x:xs) = if key == fst x then x:xs
