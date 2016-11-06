@@ -3,6 +3,7 @@ module Lib
     ) where
 
 import Control.Monad
+import Data.List
 import Data.Foldable
 import Data.Maybe
 import System.Environment
@@ -18,7 +19,8 @@ import LocalStorage
 -- stream. Once it gets a valid URL, starts the stream and prints an exit
 -- message after the stream ends
 watchEpisode :: Maybe String -> String -> String -> IO ()
-watchEpisode ep showKey catalogPath = do
+watchEpisode ep showId catalogPath = do
+  putStrLn $ lookingUpEpisodeMessage showId ep
   catalog <- parseCatalogFile catalogPath
   let episodes = lookupEpisode ep catalog
   if null episodes then
@@ -27,31 +29,51 @@ watchEpisode ep showKey catalogPath = do
     -- This line is meant fo when the user requests an inexistant episode
     putStrLn $ "episode " ++ fromJust ep ++ " not found."
   else
-    watchSequence showKey episodes
+    watchSequence showId episodes
+
+handleEndOfShow :: String -> IO()
+handleEndOfShow showId = do
+  removeValue showId
+  putStrLn $ "You have watched all available episodes of " ++ showId ++ ". Goodbye!"
+
+onLivestreamerClose :: String -> String -> [(String, String)] -> IO ()
+onLivestreamerClose showId consoleOutput nextEpisodes = do
+  let exitMessage = last $ lines consoleOutput
+  let success = streamFinishedSuccessfully exitMessage
+
+  if success == Just True && nextEpisodes /= [] then
+    saveSessionAndContinue showId nextEpisodes else
+    if success == Just True && null nextEpisodes then
+    handleEndOfShow showId else
+    if success == Just False then
+    putStrLn "Closed the stream. See you later!"
+    else putStrLn $ "Something unexpected happened. livestreamer output:\n" ++ consoleOutput
+
+-- Parses the catalog file for the requested show and streams an episode starting
+-- from the requested position
+watchUnfinishedEpisode :: String -> String -> String -> String -> IO ()
+watchUnfinishedEpisode epId showId catalogPath startPos = do
+  putStrLn $ lookingUpEpisodeMessage showId (Just epId)
+  catalog <- parseCatalogFile catalogPath
+  let (_, s:url):nextEpisodes = lookupEpisode (Just epId) catalog
+  consoleOutput <- saveNewMPVScript showId epId >>= streamPreviousSession url Nothing startPos
+  onLivestreamerClose showId consoleOutput nextEpisodes
 
 
 watchSequence :: String -> [(String, String)] -> IO ()
-watchSequence showKey episodes = do
   -- The episode URL will have one space at the beginning, let's trim that
-  let episodeUrl = drop 1 $ snd $ head episodes
-  let nextEpisodes = tail episodes
-  consoleOutput <- stream episodeUrl Nothing
-  let exitMessage = last $ lines consoleOutput
-  let success = streamFinishedSuccessfully exitMessage
-  if success == Just True && nextEpisodes /= [] then
-    saveSessionAndContinue showKey nextEpisodes else
-    if success == Just True && null nextEpisodes then
-    putStrLn $ "You have watched all available episodes of " ++ showKey ++ ". Goodbye!" else
-    if success == Just False then
-    putStrLn "Closed the stream. Goodbye!" else
-    putStrLn $ "Something unexpected happened. livestreamer output:\n" ++ consoleOutput
+watchSequence showId ((epId, s:url):nextEpisodes) = do
+  -- save a lua script to persist progress and then start livestreamer
+  consoleOutput <- saveNewMPVScript showId epId >>= stream url Nothing
+  onLivestreamerClose showId consoleOutput nextEpisodes
 
 saveSessionAndContinue :: String -> [(String, String)] -> IO ()
-saveSessionAndContinue showKey nextEps = do
+saveSessionAndContinue showId nextEps = do
   let nextEp = fst $ head nextEps
-  storeValue showKey nextEp
+  --next episode should start at zero
+  storeValue showId (nextEp ++ "\n0")
   putStrLn $ "Continuing with episode " ++ nextEp ++ "..."
-  watchSequence showKey nextEps
+  watchSequence showId nextEps
 
 getEpisodeFromArgs :: [String] -> (String, Maybe String)
 getEpisodeFromArgs args =
@@ -64,10 +86,19 @@ getEpisodeFromArgs args =
     (head reverseArgs , Nothing)
 
 lookingUpEpisodeMessage :: String -> Maybe String -> String
-lookingUpEpisodeMessage showKey Nothing = "Looking up first episode of " ++
-  showKey ++ "..."
-lookingUpEpisodeMessage showKey (Just ep) = "Looking up episode " ++ ep ++ " of " ++
-  showKey ++ "..."
+lookingUpEpisodeMessage showId Nothing = "Looking up first episode of " ++
+  showId ++ "..."
+lookingUpEpisodeMessage showId (Just ep) = "Looking up episode " ++ ep ++ " of " ++
+  showId ++ "..."
+
+saveNewMPVScript :: String -> String -> IO String
+saveNewMPVScript showId episodeId = do
+  script <- getTemplateScript
+  pathToFile <- getPathToDatFile showId
+  let firstLine =  "pathToFile = \""++ pathToFile ++ "\""
+  let secondLine = "episodeId = \"" ++  episodeId ++ "\""
+  let customScript = intercalate "\n" [firstLine, secondLine, script]
+  saveScript customScript
 
 -- Parses command line arguments to start a livestreamer process and watch the
 -- desired show. Currently the supported usage is:
@@ -86,13 +117,15 @@ watchFromArgs = do
       "usage is:\n\n\tcrunchy SHOW_ID [EPISODE_ID]\n"
     exitFailure
   else do
-    let (showKey, _ep) = getEpisodeFromArgs args
+    let (showId, _ep) = getEpisodeFromArgs args
+    catalogPath <- getCatalogFilePath showId
     -- if user omits episode we should try to retrieve session from storage
-    episode <- readValueIfNecessary showKey _ep
-
-    -- notify user of activty
-    when (isNothing _ep && isJust episode) $ putStrLn "Restoring previous session..."
-    putStrLn $ lookingUpEpisodeMessage showKey episode
-
-    catalogPath <- getCatalogFilePath showKey
-    Data.Foldable.forM_ catalogPath (watchEpisode episode showKey)
+    prevSession <- readValueIfNecessary showId _ep
+    if isNothing _ep && isJust prevSession then do
+      putStrLn "Restoring previous session..."
+      let [episodeId, position] = lines $ fromJust prevSession
+      watchUnfinishedEpisode episodeId showId (fromJust catalogPath) position
+    else
+    -- I don't really understand this line, linter suggested it. It is supposed to
+    -- call (watchEpisode episode showId catalogPath) only if catalogPath is Just
+      Data.Foldable.forM_ catalogPath (watchEpisode _ep showId)

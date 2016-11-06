@@ -11,6 +11,7 @@ import System.Directory
 import System.Process
 
 catalogSrcDir = "src/catalog/"
+templateScript = "src/mpv_template_script.lua"
 
 main :: IO ()
 main = do
@@ -21,4 +22,5 @@ main = do
 
   createDirectoryIfMissing True storageDir
   createProcess (proc "cp" ["-r", catalogSrcDir, catalogDir])
+  createProcess (proc "cp" [templateScript, appDir])
   return ()

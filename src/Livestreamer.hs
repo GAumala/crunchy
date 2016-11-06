@@ -1,24 +1,50 @@
 module Livestreamer (
   stream,
   streamFinishedSuccessfully,
+  streamPreviousSession,
   streamResult
 ) where
 
 import Data.Maybe
+import Data.List
 import System.IO
 import System.Process
 
+mpvCmd script moreArgs = "mpv --cache=8192 --fullscreen --script=" ++ script ++
+  " " ++ moreArgs
+
+stream' :: String -> Maybe String -> String -> String -> IO String
+stream' episodeUrl quality script moreArgs = do
+    (code, stdout, stderr) <- readProcessWithExitCode "livestreamer"
+      ["--player", mpvCmd script moreArgs, "--verbose-player", episodeUrl,
+      fromMaybe "ultra" quality] ""
+    return stdout
+
+
 -- Starts a new livestreamer process to stream an episode.
--- Receives the episode's crunchyroll URL as argument, and optionally the quality.
--- If quality is Nothing defaults to ultra quality.
+-- Receives 3 String arguments:
+-- the episode's crunchyroll URL
+-- the path to the lua script that will persist playback position on quit
+-- the quality of stream. if quality is Nothing defaults to ultra quality.
+--
 --  Returns a String with livestreamer's exit message since exit code is always 0
 -- To ensure that the exit message is always printed, starts the process with
 -- verbose-player flag.
-stream :: String -> Maybe String -> IO String
-stream episodeUrl quality = do
-    (code, stdout, stderr) <- readProcessWithExitCode "livestreamer"
-      ["--verbose-player", episodeUrl, fromMaybe "ultra" quality] ""
-    return stdout
+stream episodeUrl quality script = stream' episodeUrl quality script []
+
+-- Starts a new livestreamer process to stream an episode adding an extra
+-- command line parameter to start from a requested position.
+-- Receives r String arguments:
+-- the episode's crunchyroll URL
+-- the path to the lua script that will persist playback position on quit
+-- the quality of stream. if quality is Nothing defaults to ultra quality.
+-- the start position.
+--
+--  Returns a String with livestreamer's exit message since exit code is always 0
+-- To ensure that the exit message is always printed, starts the process with
+-- verbose-player flag.
+streamPreviousSession episodeUrl quality startPos script = stream' episodeUrl
+  quality script ("--start=+" ++ startPos)
 
 -- Reads the final message from the livestreamer process's stdout to conclude
 -- wether the stream finished successfully or not.
